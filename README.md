@@ -1,5 +1,7 @@
 # gemini-imagegen-browser
 
+**English:** [README.en.md](README.en.md)
+
 **Skill для Claude Code** + автономный пример-скрипт: генерация **изображений
 (Nano Banana Pro), видео и музыки** в web-интерфейсе **gemini.google.com** через
 уже залогиненную вкладку вашего Chrome — **без API-ключа**, в рамках вашей же
@@ -107,9 +109,10 @@ cp SKILL.md ~/.claude/skills/gemini-imagegen-browser/SKILL.md
 ## Структура
 
 ```
+README.md / README.en.md — документация (RU / EN)
 SKILL.md                 — рецепт для агента (шаг за шагом, грабли, лимиты)
 examples/gen_frames.py   — автономный батч-пример (картинки); ~700 строк, зависимости: stdlib + Pillow + numpy
-README.md, LICENSE
+LICENSE
 ```
 
 ## Как это работает внутри (кратко)
