@@ -91,8 +91,9 @@ pip install browser-harness
 1. Open Chrome and confirm gemini.google.com loads without a login prompt.
 2. Edit `examples/gen_frames.py`:
    - `ACCOUNT = "you@gmail.com"` — the only account allowed to generate;
-   - `OFFSET_H = 1` — how far the Gemini UI clock lags your system clock (this
-     varies by region and is corrected from the first limit message);
+   - `OFFSET_H = 0` — clock-offset correction: the UI may report the reset time in
+     a different time zone — check once against the first limit message and set
+     your own difference (no correction by default);
    - `JOBS = [(name, prompt), …]` — the frame queue.
 3. Run it:
 
