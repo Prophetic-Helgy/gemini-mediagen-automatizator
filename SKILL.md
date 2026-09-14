@@ -1,13 +1,15 @@
 ---
 name: gemini-imagegen-browser
-description: "Generate images (Nano Banana Pro), video and music with the mode picker in a logged-in gemini.google.com browser session (user's own Google AI subscription — the single account configured as ACCOUNT; other accounts forbidden, but SWITCHING between already-signed-in accounts to the configured one is allowed) via browser-harness CDP — no API key. Use when asked to generate reference/product/texture images, video or music via the user's Gemini web account. Not for API-key flows and not bulk scraping."
+description: "Generate images (Nano Banana; Pro variant via per-message 'Recreate in Pro'), video and music with the mode picker in a logged-in gemini.google.com browser session (user's own Google AI subscription — the single account configured as ACCOUNT; other accounts forbidden, but SWITCHING between already-signed-in accounts to the configured one is allowed) via browser-harness CDP — no API key. Use when asked to generate reference/product/texture images, video or music via the user's Gemini web account. Not for API-key flows and not bulk scraping."
 ---
 
 # Генерация в gemini.google.com через залогиненный Chrome (без API-ключа)
 
-Генерация картинок Nano Banana Pro, видео и музыки режимами выбора («Изображения
-/ Видео / Музыка») в web-интерфейсе gemini.google.com на подписке пользователя,
-без API-ключа (подписка кредиты API не даёт — API-бэкенд не выдумывать).
+Генерация картинок (web-модель Nano Banana; по запросу на особо высокое качество —
+пересоздание в Nano Banana Pro, СМ. «Пересоздание в Pro»), видео и музыки режимами
+выбора («Изображения / Видео / Музыка») в web-интерфейсе gemini.google.com на
+подписке пользователя, без API-ключа (подписка кредиты API не даёт — API-бэкенд не
+выдумывать).
 Движок — публичный пакет `browser-harness` (pip): CLI читает python-скрипт из
 stdin, хелперы уже импортированы:
 `list_tabs switch_tab new_tab js cdp click_at_xy page_info wait_for_load`.
@@ -83,6 +85,10 @@ stdin, хелперы уже импортированы:
    музыка — `audio` с ненулевым `duration`. Параллельно проверка текстов лимита;
    timeout → `timeout_or_no_media`.
 7. **Выгрузка**: CSP режет fetch blob, кнопка «Скачать» — в скрытом overflow ⇒
+   ПРОВЕРЕНО 2026-09-14: «Скачать изображение в полном размере» и «Ещё»→«Скачать»
+   из автоматизации НЕ забираются (fetch(blob:) блокирует CSP; клик по скачиванию —
+   JS и trusted — файл не создаёт; переоткрытие чата не помогает). Тупик — сразу
+   canvas:
    картинка: canvas `drawImage(img)` + `toDataURL('image/png')` → base64 → файл;
    видео/музыка: `fetch(blobUrl)→arrayBuffer→base64` (для media-URL обычно
    проходит), если CSP режет — CDP-перехват (`Network.responseReceived` →
@@ -95,6 +101,28 @@ stdin, хелперы уже импортированы:
 - **Видео / Музыка**: тот же конвейер; отличается пункт меню (шаг 3), критерий
   готовности (шаг 6) и способ выгрузки (шаг 7). Таймауты — минуты, не секунды.
   В реестре `kind` = image|video|music.
+
+## Пересоздание в Pro (по запросу «особо высокое качество», проверено 2026-09-14)
+
+Обычная генерация идёт Nano Banana (режим «Изображения»). Более качественный вариант
+— **Nano Banana Pro** — доступен НЕ в меню «+», а на уже созданном изображении, как
+наслоение на обычное создание:
+
+- В тулбаре сообщения-картинки (ряд действий под изображением) — кнопка «Ещё»:
+  `data-test-id="more-menu-button"`, `aria-label` ~ /показать другие варианты/i,
+  тултип «Ещё». В композере/меню «+» Pro нет.
+- Клик по «Ещё» (js `.click()` по `<button>`, shadow-piercing обход) → меню с
+  пунктами; нужен «Пересоздать в Pro» (текст искать /пересоздать в pro|recreate in
+  pro/i, leaf + клик предку `[role=menuitem]`/`gem-menu-item`; меню может
+  прокручиваться — листать при промахе).
+- Соседняя кнопка «Повторить» (`data-test-id="regenerate-button"`) — обычное
+  пересоздание: новый ВАРИАНТ того же режима (счётчик «2/2», «3/3» у тулбара).
+  Pro-пункт создаёт вариант в Pro (детальнее по микрофактуре; на web разрешение
+  1024², как у обычной).
+- Ожидание: поллинг НОВОГО `img` (blob-URL отличается от прежних, `naturalWidth ≥
+  512`); индикатор «генерации» может висеть и после готовности — не доверять.
+  В реестр — отдельный ряд (name с суффиксом `_pro`). На Pro-пересоздание
+  распространяется суточный лимит.
 
 ## Валидация кадра (для картинок — PIL, не «на глаз»)
 
@@ -141,6 +169,6 @@ CSV-ряд на каждый кадр (успех И провал): kind, name, 
 | Enter вместо отправки печатает перенос строки | жать `.click()` по кнопке отправки (`aria-label` ~ /отправ\|send/i), не Enter |
 | `mode_not_selected` после trusted-ретрая | фокус меню засорён — `location.assign('…/app')` между путями |
 | Чип не виден `querySelector` | Angular shadow-DOM — рекурсия в `shadowRoot` |
-| `fetch(blob)` / скачивание не работает | CSP — canvas toDataURL для картинок; для media — CDP-перехват ответа |
+| `fetch(blob)` / скачивание не работает | CSP — canvas toDataURL для картинок; для media — CDP-перехват ответа. Кнопка «Скачать в полном размере» из автоматизации НЕ срабатывает — не пытаться |
 | «Картинка есть, но старая» | кадр начинался без чистого лендинга — навигация на /app обязательна |
 | Лимит «сбросится завтра» и очередь встала | читать дату+время из сообщения, +OFFSET, +2 мин, спать и продолжать |

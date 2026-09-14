@@ -3,9 +3,10 @@
 [Русский](README.md) | **English**
 
 **A Claude Code skill** plus a standalone reference script: generate **images
-(Nano Banana Pro), video and music** in the **gemini.google.com** web interface
-through a tab of your Chrome that is already signed in — **no API key**, using
-the Google AI subscription you already pay for.
+(Nano Banana, with on-request re-creation in Nano Banana Pro), video and music**
+in the **gemini.google.com** web interface through a tab of your Chrome that is
+already signed in — **no API key**, using the Google AI subscription you already
+pay for.
 
 The agent (Claude Code) drives a real browser through
 [browser-harness](https://github.com/browser-use/browser-harness) (CDP): it opens
@@ -25,7 +26,8 @@ Claude Code ──(python script on stdin)──▶ browser-harness ──CDP─
 
 | | |
 |---|---|
-| **What it generates** | images (Nano Banana Pro), video and music — the three modes of the “+” picker in gemini.google.com |
+| **What it generates** | images (Nano Banana; on request, re-creation in Nano Banana Pro), video and music — the three modes of the “+” picker in gemini.google.com |
+| **Pro quality** | an image can be re-created in Nano Banana Pro: the “More” (⋯) button under the image message → “Recreate in Pro”; the adjacent “Retry” makes a regular variant. Both layer on top of an already-created image |
 | **No API key** | runs on the web subscription; no key needed and none created |
 | **Batch mode** | a queue of frames: ≥90 s cadence plus jitter (protection against the daily cap), retries with a progressively tightened prompt |
 | **Every step verified** | mode actually selected (chip in the shadow-DOM), prompt inserted byte-for-byte, message actually sent (composer emptied), media actually ready (`naturalWidth`/`readyState`/`duration`) — a failure comes back as a named error with diagnostics, not as an empty file |
@@ -33,7 +35,7 @@ Claude Code ──(python script on stdin)──▶ browser-harness ──CDP─
 | **Rate-limit handling** | when Gemini reports a limit it prints a reset date and time; the script parses them, applies the UI-vs-system clock offset (configurable, `OFFSET_H`), sleeps until reset **+2 minutes**, and **continues the queue** — it never abandons a batch halfway through |
 | **Account control** | a preflight finds the active profile's e-mail in the DOM; generation only ever runs on the configured `ACCOUNT`; if needed it switches via AccountChooser to that account only (passwords are never typed) |
 | **Idempotency and a registry** | finished files are never regenerated; a CSV row per frame (success and failure) records the exact prompt, sha256, status and duration — the batch is reproducible |
-| **CSP workaround** | extraction via canvas `toDataURL` (images) and `fetch(blob)→base64` / CDP `Network.getResponseBody` (video/audio) |
+| **CSP workaround** | extraction via canvas `toDataURL` (images) and `fetch(blob)→base64` / CDP `Network.getResponseBody` (video/audio); the UI “Download” buttons do not fire under automation (CSP) and are not an extraction path |
 
 ## Use cases
 
