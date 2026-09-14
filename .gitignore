@@ -1,0 +1,9 @@
+# результаты генерации (скрипт пишет рядом с собой)
+examples/*.jpg
+examples/*.png
+examples/*.mp4
+examples/*.mp3
+examples/gen_registry.csv
+examples/_diag_*
+__pycache__/
+*.pyc
