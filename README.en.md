@@ -35,7 +35,7 @@ Claude Code ──(python script on stdin)──▶ browser-harness ──CDP─
 | **Rate-limit handling** | when Gemini reports a limit it prints a reset date and time; the script parses them, applies the UI-vs-system clock offset (configurable, `OFFSET_H`), sleeps until reset **+2 minutes**, and **continues the queue** — it never abandons a batch halfway through |
 | **Account control** | a preflight finds the active profile's e-mail in the DOM; generation only ever runs on the configured `ACCOUNT`; if needed it switches via AccountChooser to that account only (passwords are never typed) |
 | **Idempotency and a registry** | finished files are never regenerated; a CSV row per frame (success and failure) records the exact prompt, sha256, status and duration — the batch is reproducible |
-| **CSP workaround** | extraction via canvas `toDataURL` (images) and `fetch(blob)→base64` / CDP `Network.getResponseBody` (video/audio); the UI “Download” buttons do not fire under automation (CSP) and are not an extraction path |
+| **CSP workaround** | extraction via canvas `toDataURL` (images); for video, `Browser.setDownloadBehavior` on the element's https URL (original bytes, no re-encode) or `fetch(blob)→base64` / CDP capture; the UI “Download” buttons do not fire under automation (CSP) and are not an extraction path |
 
 ## Use cases
 
