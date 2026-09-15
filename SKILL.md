@@ -28,6 +28,9 @@ stdin, хелперы уже импортированы:
 - Перед генерацией проверить, что активный аккаунт на gemini.google.com — именно
   ACCOUNT: искомать адрес профиля в DOM (атрибуты avatar/profile-элемента,
   `aria-label`, `title`, textContent; заодно `<img>` аватара с `title`/`src`).
+  Надёжнее всего — `aria-label` родителя аватара («Аккаунт Google: NAME (e-mail)»);
+  префикс URL `/u/N` аккаунт НЕ доказывает (индексы плавают) — при нескольких
+  вкладках gemini брать ту, где скан даёт ACCOUNT.
 - Активный аккаунт — ДРУГОЙ из уже залогиненных на машине — РАЗРЕШЕНО
   переключиться самостоятельно: `location.assign`
   `https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fgemini.google.com%2Fapp`,
@@ -92,10 +95,13 @@ stdin, хелперы уже импортированы:
    canvas:
    картинка: canvas `drawImage(img)` + `toDataURL('image/png')` → base64 → файл;
    видео/музыка: `video.currentSrc` — https `contribution.usercontent.google.com/download?...`
-   (генерация по тексту) или `blob:` (с референсами). Для https-URL page-fetch режет CSP —
-   PRIMARY: `cdp('Browser.setDownloadBehavior', behavior='allow', downloadPath=…)` +
+   (генерация по тексту) или `blob:` (с референсами). Для https-URL PRIMARY:
+   `fetch(url, {credentials:'include'})` из вкладки ЧАТА (fetch БЕЗ credentials — «Failed to
+   fetch»: отсутствующая авторизационная кука, а не CSP; проверено 2026-09-15) → base64
+   чанками; фолбэк — `cdp('Browser.setDownloadBehavior', behavior='allow', downloadPath=…)` +
    `new_tab(currentSrc)` → оригинальный mp4 без перекодирования кладётся в downloadPath
-   (проверено 2026-09-15), вкладку закрыть. Для `blob:` — `fetch(blobUrl)→arrayBuffer→base64`;
+   (проверено 2026-09-15; размеры с fetch+credentials совпадают побайтово), вкладку закрыть.
+   Для `blob:` — `fetch(blobUrl)→arrayBuffer→base64`;
    фолбэк — CDP-перехват (`Network.responseReceived` → `Network.getResponseBody`,
    base64-флаг). Чанковать base64 наружу, целиком в одну печать не сувать.
 
@@ -174,7 +180,9 @@ CSV-ряд на каждый кадр (успех И провал): kind, name, 
 | Enter вместо отправки печатает перенос строки | жать `.click()` по кнопке отправки (`aria-label` ~ /отправ\|send/i), не Enter |
 | `mode_not_selected` после trusted-ретрая | фокус меню засорён — `location.assign('…/app')` между путями |
 | Чип не виден `querySelector` | Angular shadow-DOM — рекурсия в `shadowRoot` |
-| `fetch(blob)` / скачивание не работает | CSP — canvas toDataURL для картинок; для media с https-src — `Browser.setDownloadBehavior`+`new_tab`, для blob — fetch/CDP-перехват. Кнопка «Скачать в полном размере» из автоматизации НЕ срабатывает — не пытаться |
+| `fetch(blob)` / скачивание не работает | CSP — canvas toDataURL для картинок; для media с https-src — fetch+credentials из вкладки чата (или `Browser.setDownloadBehavior`+`new_tab`), для blob — fetch/CDP-перехват. Кнопка «Скачать в полном размере» из автоматизации НЕ срабатывает — не пытаться |
+| fetch mp4 с usercontent «Failed to fetch» | не хватает авторизационной куки: `{credentials:'include'}` из вкладки чата — проходит |
+| Генерация «висит» неограниченно, пустые «Ответ Gemini», панель не монтируется | чаще всего канал доступа к сервису (зеркало/прокси устарел) — после смены канала тот же промпт готов за минуту; проверь вручную, прежде чем делать выводы о политике контента |
 | `timeout_or_no_video` при живом чате (текст-промт без референсов) | src у видео НЕ blob, а `contribution.usercontent.google.com/download?...`, и готово оно за <1 мин; проверь, что отправка состоялась (композер пуст + `response-container`), а не только ждал |
 | «Картинка есть, но старая» | кадр начинался без чистого лендинга — навигация на /app обязательна |
 | Лимит «сбросится завтра» и очередь встала | читать дату+время из сообщения, +OFFSET, +2 мин, спать и продолжать |
