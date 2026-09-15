@@ -101,6 +101,9 @@ stdin, хелперы уже импортированы:
    чанками; фолбэк — `cdp('Browser.setDownloadBehavior', behavior='allow', downloadPath=…)` +
    `new_tab(currentSrc)` → оригинальный mp4 без перекодирования кладётся в downloadPath
    (проверено 2026-09-15; размеры с fetch+credentials совпадают побайтово), вкладку закрыть.
+   **Одно окно:** весь кадр — доступ, промпт, отправка, ожидание и выгрузка — в ОДНОЙ вкладке
+   (той, где начата генерация); new_tab поднимает отдельное окно — только фолбэк при провале
+   fetch+credentials. Выбор вкладки (скан аккаунта) — ДО начала кадра.
    Для `blob:` — `fetch(blobUrl)→arrayBuffer→base64`;
    фолбэк — CDP-перехват (`Network.responseReceived` → `Network.getResponseBody`,
    base64-флаг). Чанковать base64 наружу, целиком в одну печать не сувать.
