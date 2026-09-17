@@ -33,7 +33,7 @@ Claude Code ──(python script on stdin)──▶ browser-harness ──CDP─
 | **Every step verified** | mode actually selected (chip in the shadow-DOM), prompt inserted byte-for-byte, message actually sent (composer emptied), media actually ready (`naturalWidth`/`readyState`/`duration`) — a failure comes back as a named error with diagnostics, not as an empty file |
 | **Image validation** | PIL: minimum size, ~1:1 aspect, “not a flat fill”; failure → automatic retry with a stricter prompt |
 | **Rate-limit handling** | when Gemini reports a limit it prints a reset date and time; the script parses them, applies the UI-vs-system clock offset (configurable, `OFFSET_H`), sleeps until reset **+2 minutes**, and **continues the queue** — it never abandons a batch halfway through |
-| **Account control** | a preflight finds the active profile's e-mail in the DOM; generation only ever runs on the configured `ACCOUNT`; if needed it switches via AccountChooser to that account only (passwords are never typed) |
+| **Account control** | a preflight finds the active profile's e-mail in the DOM; a "guarantor" reruns that scan before EVERY frame (the active account can silently switch mid-batch); generation only ever runs on the configured `ACCOUNT` and only in a separate window; if needed it switches via AccountChooser to that account only (passwords are never typed) |
 | **Idempotency and a registry** | finished files are never regenerated; a CSV row per frame (success and failure) records the exact prompt, sha256, status and duration — the batch is reproducible |
 | **CSP workaround** | extraction via canvas `toDataURL` (images); for video, `fetch` with `credentials:'include'` from the chat tab (without the cookie you get “Failed to fetch” — that's not CSP) or `Browser.setDownloadBehavior` on the element's https URL (original bytes, no re-encode); the UI “Download” buttons do not fire under automation (CSP) and are not an extraction path |
 
@@ -76,11 +76,14 @@ Claude Code ──(python script on stdin)──▶ browser-harness ──CDP─
      own prompt and your own agent, and watch the screen on the first runs.
    - The script **never types passwords or codes** and never touches any account
      other than the configured one.
+   - All automation runs in **its own separate Chrome window** for the configured
+     profile: the user's main-window tabs are never opened, navigated or
+     activated (strictly — even "harmless" reads disturb the person).
    - The daily generation cap is real: roughly 1.5–4 minutes per frame. On a limit
      the script waits and continues (see Capabilities), but hammering the queue
      through a cap is pointless.
    - This **automates a web interface**: Google can change the markup — the
-     recipes in SKILL.md were tuned against the UI of 2026-09-14, and the “Common
+     recipes in SKILL.md were tuned against the UI of 2026-09-17, and the “Common
      pitfalls” section helps repair them. Automating a service may violate its
      terms of service — weigh that yourself before running it on your account.
 

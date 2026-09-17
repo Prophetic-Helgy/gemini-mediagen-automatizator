@@ -99,7 +99,7 @@ REMARKS = ["", "Важно: кадр целиком без текста, бук�
 # сначала новый (JS-click + клик пункта), затем запасной (trusted + клавиши).
 # При лимите fail несёт окно текста сообщения — по нему парсится время сброса.
 FRAME = r'''
-import json, time, base64, os
+import json, time, base64, os, re
 PROMPT = {prompt_json}
 TMPDIR = {tmpdir_json}
 TIMEOUT = {timeout}
@@ -110,26 +110,37 @@ def fail(err, **kw):
     raise SystemExit(0)
 
 tab = None
+u_prefix = ""
 try:
     for t in list_tabs():
-        if "gemini.google.com" in (t.get("url") or ""):
-            switch_tab(t["targetId"]); tab = t; break
+        tu = t.get("url") or ""
+        if "gemini.google.com" in tu:
+            switch_tab(t["targetId"]); tab = t
+            m = re.search(r"/u/\d+", tu)
+            if m: u_prefix = m.group(0)
+            break
 except Exception:
     pass
+# грабля 2026-09-15: навигация без /u/N откатывает на u/0 (чужой аккаунт)
+GEM_APP = json.dumps("https://gemini.google.com" + u_prefix + "/app")
 if tab is None:
     new_tab("https://gemini.google.com/app")
 else:
-    js("location.assign('https://gemini.google.com/app')")
+    js("location.assign(" + GEM_APP + ")")   # URL литералом: URL — встроенный конструктор JS
 try:
     wait_for_load()
 except Exception:
     pass
 
 COMPOSER = '.ql-editor, div[contenteditable="true"][role="textbox"], textarea'
+# после чата в DOM живёт невидимый .ql-editor — брать ПОСЛЕДНИЙ ВИДИМЫЙ редактор
+ED_EXPR = ("(() => {{ const eds = [...document.querySelectorAll('" + COMPOSER + "')]"
+           ".filter(e => {{ const r = e.getBoundingClientRect();"
+           "return r.width > 0 && r.height > 0; }});"
+           "return eds.length ? eds[eds.length-1] : null; }})()")
 def composer_rect():
-    return js("(() => {{ const el = document.querySelector('" + COMPOSER + "');"
-        "if (!el) return null; el.scrollIntoView({{block:'center'}});"
-        "const r = el.getBoundingClientRect();"
+    return js("(() => {{ const el = " + ED_EXPR + "; if (!el) return null;"
+        "el.scrollIntoView({{block:'center'}}); const r = el.getBoundingClientRect();"
         "return {{x: r.x + r.width/2, y: r.y + Math.min(r.height/2, 30)}}; }})()")
 
 deadline = time.time() + 90
@@ -148,10 +159,20 @@ def key(vk, code):
     cdp("Input.dispatchKeyEvent", type="keyDown", windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk, code=code, key=code)
     cdp("Input.dispatchKeyEvent", type="keyUp", windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk, code=code, key=code)
 
-CHIP_JS = """(() => {{ const allDeep = (r, a = []) => {{ for (const e of r.querySelectorAll('*')) {{
-        a.push(e); if (e.shadowRoot) allDeep(e.shadowRoot, a); }} return a; }};
-    return allDeep(document).some(e => {{ const t = (e.textContent||'').trim(); const q = e.getBoundingClientRect();
-        return /^изображения$/i.test(t) && q.width > 0 && q.width < 400; }}); }})()"""
+ALL_DEEP = ("const allDeep = (r, a = []) => {{ for (const e of r.querySelectorAll('*')) {{ "
+            "a.push(e); if (e.shadowRoot) allDeep(e.shadowRoot, a); }} return a; }};")
+# названия пунктов плавают: «Создание изображений» (род. падеж) — матч ПОДСТРОКОЙ
+ITEM_RX = r"/создание\s+изображений/i.test(t) || /^изображения$/i.test(t)"
+# чип режима сверяем ТОЛЬКО у композера (низ экрана) — иначе ловим пункт бокового меню
+CHIP_JS = ("(() => {{ " + ALL_DEEP +
+    " return allDeep(document).some(e => {{ const t = (e.textContent||'').trim();"
+    " const q = e.getBoundingClientRect();"
+    " return (" + ITEM_RX + ") && q.width > 0 && q.width < 400 && q.top > innerHeight*0.55; }}); }})()")
+
+# две волны: секция режимов дорисовывается асинхронно (5–20 с) — ждём появления пункта
+ITEM_COUNT_JS = ("(() => {{ " + ALL_DEEP +
+    " return allDeep(document).filter(e => {{ const t = (e.textContent||'').trim();"
+    " return (" + ITEM_RX + ") && e.children.length === 0; }}).length; }})()")
 
 PLUS_JS = """(() => {{ const b = [...document.querySelectorAll('button')]
     .find(x => /загрузка и инструмент/i.test(x.getAttribute('aria-label')||''));
@@ -163,19 +184,30 @@ def open_plus_js():
         .find(x => /загрузка и инструмент/i.test(x.getAttribute('aria-label')||''));
         if (!b) return false; b.click(); return true; }})()""")
 
-def click_img_item_js():
-    return js("""(() => {{ const allDeep = (r, a = []) => {{ for (const e of r.querySelectorAll('*')) {{
-            a.push(e); if (e.shadowRoot) allDeep(e.shadowRoot, a); }} return a; }};
-        const els = allDeep(document).filter(e => /^изображения$/i.test((e.textContent||'').trim()));
-        if (!els.length) return null;
-        const leaf = els[els.length-1];
-        let t = leaf; while (t && !/button|list-item|action|mat-list-item|toolbox-item/i.test(t.tagName + ' ' + (t.className||''))) t = t.parentElement;
-        (t || leaf).click();
-        return (t || leaf).tagName; }})()""")
+# хендлер пункта живёт на nearest BUTTON/role~menuitem|option (2026-09-17):
+# подъём по классам стопорится на span.mdc-list-item__content; shadow — через host
+CLICK_IMG_ITEM_JS = ("(() => {{ " + ALL_DEEP +
+    " const els = allDeep(document).filter(e => {{ const t = (e.textContent||'').trim();"
+    " return (" + ITEM_RX + ") && e.children.length === 0; }});"
+    " if (!els.length) return null;"
+    " const leaf = els[els.length-1];"
+    " const up = e => e.parentElement || (e.getRootNode && e.getRootNode() && e.getRootNode().host) || null;"
+    " let t = leaf, guard = 0;"
+    " while (t && guard++ < 12 && !(t.tagName === 'BUTTON' ||"
+    " /menuitem|option/i.test((t.getAttribute && t.getAttribute('role')) || ''))) t = up(t);"
+    " t = t || leaf;"
+    " if (t.disabled || t.getAttribute('aria-disabled') === 'true') return 'disabled';"
+    " t.scrollIntoView({{block:'center'}}); t.click();"
+    " return t.tagName + '|' + (t.getAttribute('role') || ''); }})()")
 
-mode_ok = False
-mode_via = ""
-for _attempt in range(3):
+def mode_chip_ok():
+    return bool(js(CHIP_JS))
+
+# лендинг стартует в режиме «Изображения»: чип уже у композера — цикл выбора НЕЛЬЗЯ
+# продавливать через «+»-меню (ломает отправку, грабля 2026-09-16)
+mode_ok = mode_chip_ok()
+mode_via = "already"
+for _attempt in range(3 if not mode_ok else 0):
     cdp("Page.bringToFront")
     time.sleep(0.8)
     for _ in range(2):
@@ -184,15 +216,20 @@ for _attempt in range(3):
     # Идёт ПЕРВЫМ: trusted-клик + стрелки на новом UI гоняет фокус по плоскому меню
     # и Enter'ом выбирает чужой пункт — состояние мусорится перед путём B (diag 2026-09-14).
     if open_plus_js():
-        time.sleep(1.5)
-        if click_img_item_js():
+        # меню раскрывается ДВУМЯ волнами — поллим пункт до ~18 с
+        for _w in range(12):
+            if (js(ITEM_COUNT_JS) or 0) > 0:
+                break
+            time.sleep(1.5)
+        clicked = js(CLICK_IMG_ITEM_JS)
+        if clicked and clicked != "disabled":
             time.sleep(1.8)
-            mode_ok = bool(js(CHIP_JS))
-            if mode_ok:
+            if mode_chip_ok():
+                mode_ok = True
                 mode_via = "js_flat_menu"
                 break
     # сброс состояния перед запасным путём
-    js("location.assign('https://gemini.google.com/app')")
+    js("location.assign(" + GEM_APP + ")")
     try:
         wait_for_load()
     except Exception:
@@ -222,60 +259,117 @@ if not mode_ok:
     fail("image_mode_not_selected", dbg=dbg)
 
 def editor_text():
-    return js("(() => {{ const el = document.querySelector('" + COMPOSER + "');"
+    return js("(() => {{ const el = " + ED_EXPR + ";"
         "return el ? (el.value ?? el.textContent) : null; }})()") or ""
 
+def clear_editor():
+    # JS selectAllChildren Quill не признаёт — реальные CDP Ctrl+A (modifiers=2) + Delete
+    for tp in ("keyDown", "keyUp"):
+        cdp("Input.dispatchKeyEvent", type=tp, key="a", code="KeyA", modifiers=2,
+            windowsVirtualKeyCode=65, nativeVirtualKeyCode=65)
+    for tp in ("keyDown", "keyUp"):
+        cdp("Input.dispatchKeyEvent", type=tp, key="Delete", code="Delete",
+            windowsVirtualKeyCode=46, nativeVirtualKeyCode=46)
+    time.sleep(0.3)
+
+sq = lambda s: re.sub(r"\s+", " ", (s or "")).strip()
+# trusted-клик по лендинговому композеру иногда не даёт фокус — проба «т» с перекликом
 comp = composer_rect() or comp
-click_at_xy(comp["x"], comp["y"])
-time.sleep(0.3)
-js("(() => {{ const el = document.querySelector('" + COMPOSER + "');"
-   "if (!el) return; el.focus(); getSelection().selectAllChildren(el); }})()")
+focused = False
+for _try in range(6):
+    cdp("Page.bringToFront")
+    click_at_xy(comp["x"], comp["y"])
+    time.sleep(0.5)
+    # keyDown(без text)+insertText+keyUp: голый insertText не задаёт selection Quill —
+    # Ctrl+A+Delete после него не срабатывает (2026-09-17)
+    cdp("Input.dispatchKeyEvent", type="keyDown", key="т", code="KeyT",
+        windowsVirtualKeyCode=84, nativeVirtualKeyCode=84)
+    cdp("Input.insertText", text="т")
+    cdp("Input.dispatchKeyEvent", type="keyUp", key="т", code="KeyT",
+        windowsVirtualKeyCode=84, nativeVirtualKeyCode=84)
+    time.sleep(0.4)
+    if (editor_text() or "").strip() == "т":
+        focused = True
+        break
+    clear_editor()
+    comp = composer_rect() or comp
+if not focused:
+    fail("focus_no_accept")   # честный провал лучше ложного send_failed
+for _clr in range(4):
+    clear_editor()
+    if not (editor_text() or "").strip():
+        break
+else:
+    fail("clear_failed")      # никогда не печатать поверх остатка
 cdp("Input.insertText", text=PROMPT)
-time.sleep(0.4)
-if (editor_text() or "").strip() != PROMPT.strip():
+time.sleep(0.5)
+if sq(editor_text()) != sq(PROMPT):
     fail("prompt_mismatch", have=(editor_text() or "")[:200])
+# SYNC WAIT (2026-09-18): JS-click по «Отправить» сразу после insertText (~<2 с)
+# отправляет ПУСТОЕ сообщение и создаёт пустые чаты (нет user-query). Модель
+# Quill/Angular догоняет DOM за ~7 с: до отправки выдерживаем паузу и ещё раз
+# убеждаемся, что текст промпта всё ещё в редакторе.
+for _ in range(3):
+    time.sleep(3)
+    if sq(editor_text()) != sq(PROMPT):
+        fail("prompt_dropped_before_send", have=(editor_text() or "")[:120])
+
+# Кнопка отправки — STRICT: infinitive в НАЧАЛЕ trimmed aria-label. Мягкий
+# /отправ|send/i ловит декоев — заголовки чатов сайдбара («Отправление поезда…»)
+# тоже матчатся и «отправка» уходит в пустоту. Приоритет точного
+# «Отправить сообщение», ниже всех — самый нижний.
+SEND_PRED = ("(b => { const al = (b.getAttribute('aria-label') || '').trim();"
+             "return /^(отправить|send)/i.test(al) || b.classList.contains('send-button'); }")
+def _send_expr():
+    return ("(() => {{ const btns = [...document.querySelectorAll('button')]"
+            ".filter({SEND_PRED}"
+            ".filter(b => !b.disabled && b.getAttribute('aria-disabled') !== 'true'"
+            "  && b.getBoundingClientRect().width > 0);"
+            " const rank = b => ((b.getAttribute('aria-label') || '').trim() === 'Отправить сообщение') ? 2 : 1;"
+            " btns.sort((a, b) => rank(b) - rank(a)"
+            "   || b.getBoundingClientRect().y - a.getBoundingClientRect().y);"
+            " return btns[0] || null; }})()").replace("{SEND_PRED}", SEND_PRED)
 
 def send_button():
-    return js("""(() => {{ const btns = [...document.querySelectorAll('button')].filter(b =>
-        /отправ|send/i.test(b.getAttribute('aria-label') || '') || b.classList.contains('send-button'));
-        const b = btns.find(x => !x.disabled && x.getBoundingClientRect().width > 0);
-        if (!b) return null; const r = b.getBoundingClientRect();
-        return {{x: r.x + r.width/2, y: r.y + r.height/2}}; }})()""")
+    return js("""(() => {{ const b = %s; if (!b) return null;
+        const r = b.getBoundingClientRect();
+        return {{x: r.x + r.width/2, y: r.y + r.height/2}}; }})()""" % _send_expr())
 
 def sent_ok():
-    return not (editor_text() or "").strip()
+    # «редактор опустел» само по себе врёт (пустеет и ДО отправки): нужен
+    # response-container или URL /app/<id> — признак принятого сообщения
+    if (editor_text() or "").strip():
+        return False
+    resp = (js("document.querySelectorAll('response-container').length") or 0) > 0
+    url = page_info().get("url") or ""
+    return resp or bool(re.search(r"/app/[0-9a-f]{{8,}}", url))
+
+def click_send():
+    return js("""(() => {{ const b = %s;
+    if (!b) return false; b.scrollIntoView({{block:'center'}}); b.click(); return true; }})()""" % _send_expr())
 
 sent = False
-# путь A (UI 2026-09-14): JS .click() по «Отправить сообщение» — проверен diag
-# 2026-09-14 (после него editor пустеет и открывается чат). Enter в режиме
-# «Изображения» вставляет перевод строки, поэтому идёт НЕ первым.
-js("""(() => {{ const btns = [...document.querySelectorAll('button')].filter(b =>
-        /отправ|send/i.test(b.getAttribute('aria-label') || '') || b.classList.contains('send-button'));
-    const b = btns.find(x => !x.disabled && x.getBoundingClientRect().width > 0);
-    if (!b) return false; b.scrollIntoView({{block:'center'}}); b.click(); return true; }})()""")
-for _ in range(4):
-    time.sleep(1.5)
+# JS .click() по «Отправить сообщение» — принятие с задержкой 30–90 с: полл до 150 с
+# с повторным кликом раз в ~12 с. Enter НЕ жаловать НИКОГДА — вставляет перевод строки.
+click_send()
+_ts = time.time(); _last_click = _ts
+while time.time() - _ts < 150:
+    time.sleep(3)
     if sent_ok():
         sent = True; break
+    if time.time() - _last_click > 12:
+        click_send(); _last_click = time.time()
 if not sent:
-    # путь B (запасной, старый UI): Enter в сфокусированном редакторе
-    js("(() => {{ const el = document.querySelector('" + COMPOSER + "'); if (el) el.focus(); }})()")
-    for t in ("keyDown", "keyUp"):
-        cdp("Input.dispatchKeyEvent", type=t, key="Enter", code="Enter",
-            windowsVirtualKeyCode=13, nativeVirtualKeyCode=13, text="\\r" if t == "keyDown" else "")
-    for _ in range(3):
-        time.sleep(1.2)
-        if sent_ok():
-            sent = True; break
-if not sent:
-    # путь C: trusted-клик по координатам кнопки
-    sb = send_button()
-    if sb:
-        click_at_xy(sb["x"], sb["y"])
-    for _ in range(4):
-        time.sleep(1.5)
-        if sent_ok():
-            sent = True; break
+    # Путь C (2026-09-18): trusted-клик по координатам «Отправить» НЕ работает —
+    # он чистит композер без создания чата. Если после JS-ретраев текст всё ещё
+    # в редакторе — ещё JS-клики; если композер пуст, а чата нет — это не
+    # «недоклик», а пустая отправка, diagnostic вместо бесконечных кликов.
+    if (editor_text() or "").strip():
+        for _ in range(3):
+            click_send()
+            time.sleep(6)
+            if sent_ok():
+                sent = True; break
 if not sent:
     dbg = os.path.join(TMPDIR, "debug_send.png")
     try:
@@ -287,9 +381,12 @@ if not sent:
          url=page_info().get("url"))
 t0 = time.time()
 
+IMG_FILTER = ("(/image/i.test(i.className||'') || /blob:|gg-dl|googleusercontent/i.test(i.src||''))"
+              " && i.complete && i.naturalWidth >= 512")
+
 def gen_image():
     return js("""(() => {{ const imgs = [...document.querySelectorAll('img')]
-        .filter(i => /\\bimage\\b/i.test(i.className||'') && i.complete && i.naturalWidth >= 512);
+        .filter(i => """ + IMG_FILTER + """);
         return imgs.length ? {{n: imgs.length}} : {{n: 0,
           text: [...document.querySelectorAll('response-container')]
                 .slice(-1).map(e => (e.innerText||'').slice(0,200))[0] || ''}}; }})()""")
@@ -319,16 +416,35 @@ if not img_found:
 time.sleep(1.5)
 
 data = js("""(async () => {{
-  const imgs = [...document.querySelectorAll('img')].filter(i =>
-      /\\bimage\\b/i.test(i.className||'') && i.complete && i.naturalWidth >= 512);
+  const imgs = [...document.querySelectorAll('img')].filter(i => """ + IMG_FILTER + """);
   const img = imgs[imgs.length-1];
   if (!img) return null;
-  const c = document.createElement('canvas');
-  c.width = img.naturalWidth; c.height = img.naturalHeight;
-  c.getContext('2d').drawImage(img, 0, 0);
-  const url = c.toDataURL('image/png');
-  return {{w: c.width, h: c.height, b64: url.slice(url.indexOf(',') + 1)}};
+  try {{
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    const url = c.toDataURL('image/png');
+    return {{w: c.width, h: c.height, b64: url.slice(url.indexOf(',') + 1)}};
+  }} catch (e) {{
+    // https-картинка (lh3 gg-dl) на странице чата делает canvas tainted,
+    // fetch режет CSP — вернём URL: топ-левел навигацию CSP не блокирует
+    return /^https:/.test(img.src) ? {{nav: img.src}} : null;
+  }}
 }})()""")
+if data and data.get("nav"):
+    js("location.assign(" + json.dumps(data["nav"]) + ")")   # URL литералом, не переменной
+    try:
+        wait_for_load()
+    except Exception:
+        pass
+    time.sleep(2.0)
+    data = js("""(async () => {{ const img = document.querySelector('img');
+        if (!img || !img.complete || !img.naturalWidth) return null;
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        const url = c.toDataURL('image/png');
+        return {{w: c.width, h: c.height, b64: url.slice(url.indexOf(',') + 1), via: 'direct_nav'}}; }})()""")
 if not data or not data.get("b64"):
     fail("extract_failed")
 os.makedirs(TMPDIR, exist_ok=True)
@@ -336,7 +452,8 @@ out = os.path.join(TMPDIR, "frame.png")
 open(out, "wb").write(base64.b64decode(data["b64"]))
 
 print(MARK + json.dumps({{"ok": True, "file": out, "w": data["w"], "h": data["h"],
-                          "elapsed": round(time.time() - t0, 1), "via": "canvas",
+                          "elapsed": round(time.time() - t0, 1),
+                          "via": data.get("via") or "canvas",
                           "mode_via": mode_via}}))
 '''
 
@@ -370,6 +487,18 @@ def preflight():
 def switch_script():
     """AccountChooser: клик по строке строго ACCOUNT среди уже залогиненных."""
     return SWITCH_SCRIPT.replace("__ACC__", json.dumps(ACCOUNT))
+
+
+def ensure_account():
+    """Гарант аккаунта (2026-09-16): вкладка может МОЛЧА смениться на чужой
+    аккаунт посреди батча — скан нужен ПЕРЕД КАЖДЫМ кадром, не только на старте."""
+    state, emails = preflight()
+    if state == "account_mismatch":
+        log(f"гарант: активен не {ACCOUNT} (emails={emails[:3]}) — переключаю")
+        sw = harness_run(switch_script(), 150)
+        log(f"переключение: {sw}")
+        state, emails = preflight()
+    return state, emails
 
 
 def parse_reset(msg):
@@ -422,19 +551,24 @@ def wait_until(t):
 
 
 PREFLIGHT_SCRIPT = r'''
-import json, time
+import json, time, re
 MARK = "###JSON###"
 tab = None
+u_prefix = ""
 try:
     for t in list_tabs():
-        if "gemini.google.com" in (t.get("url") or ""):
-            switch_tab(t["targetId"]); tab = t; break
+        tu = t.get("url") or ""
+        if "gemini.google.com" in tu:
+            switch_tab(t["targetId"]); tab = t
+            m = re.search(r"/u/\d+", tu)
+            if m: u_prefix = m.group(0)   # навигация без /u/N откатывает на u/0
+            break
 except Exception:
     pass
 if tab is None:
     new_tab("https://gemini.google.com/app")
 else:
-    js("location.assign('https://gemini.google.com/app')")
+    js("location.assign(" + json.dumps("https://gemini.google.com" + u_prefix + "/app") + ")")
 try: wait_for_load()
 except Exception: pass
 
@@ -580,6 +714,15 @@ def to_jpeg(src, dst):
 def gen_one(name, prompt_base, attempt_note, last_done):
     target = HERE / f"{name}.jpg"
     prompt = prompt_base + (" " + attempt_note if attempt_note else "")
+    # гарант перед КАЖДЫМ кадром: после смены аккаунта генерация ушла бы на чужой
+    state, emails = ensure_account()
+    if state != "ok":
+        registry_append({"kind": "image_frame", "name": name, "frame": "1",
+                         "prompt": prompt, "model": MODEL,
+                         "date_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                         "file": "", "sha256": "", "status": f"fail:{state}",
+                         "elapsed_s": 0, "notes": str(emails)[:200]})
+        return "fail", None, {"error": state, "emails": emails}
     if last_done is not None:
         need = PACE_S + random.uniform(0, PACE_S * 0.22)
         done = time.time() - last_done
@@ -640,13 +783,7 @@ def gen_one(name, prompt_base, attempt_note, last_done):
 def main():
     if not ACCOUNT:
         sys.exit('Заполните ACCOUNT в начале скрипта (e-mail аккаунта с подпиской).')
-    state, emails = preflight()
-    if state == "account_mismatch":
-        # несколько аккаунтов уже залогинены — переключаемся строго на ACCOUNT
-        log(f"активен не {ACCOUNT} (emails={emails}) — пробую переключить аккаунт")
-        sw = harness_run(switch_script(), 150)
-        log(f"переключение: {sw}")
-        state, emails = preflight()
+    state, emails = ensure_account()
     if state != "ok":
         log(f"ОСТАНОВКА: {state} (emails={emails}) — по правилам скилла генерация "
             f"не выполняется; за пользователя не логинимся.")
